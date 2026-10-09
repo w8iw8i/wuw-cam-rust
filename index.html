@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WUW CAM, Rust edition</title>
+<meta name="description" content="Alternative Rust firmware for the WUW CAM, an ESP32-S3 + OV5640 art camera.">
+<style>
+@font-face { font-family: "Silkscreen"; src: url("assets/fonts/Silkscreen-Regular.ttf") format("truetype"); font-display: swap; }
+:root { --bg: #0d0d10; --fg: #e8e6e1; --dim: #9a978f; --line: #2a2a31; --accent: #f05a28; --ok: #6cc070; --wait: #e0b040; }
+@media (prefers-color-scheme: light) { :root { --bg: #f6f4ef; --fg: #1b1b1f; --dim: #5f5c55; --line: #d9d5cc; --accent: #c8441a; --ok: #2f7d34; --wait: #9a6d00; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 48px 16px 64px; }
+h1, h2 { font-family: "Silkscreen", monospace; font-weight: 400; letter-spacing: .02em; }
+h1 { font-size: clamp(28px, 7vw, 44px); line-height: 1.1; margin: 0 0 8px; }
+h1 span { color: var(--accent); }
+h2 { font-size: 20px; margin: 40px 0 12px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+p.lede { color: var(--dim); margin: 0 0 24px; }
+a { color: var(--accent); }
+code { font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; background: color-mix(in srgb, var(--line) 60%, transparent); padding: 1px 5px; border-radius: 3px; }
+pre { overflow-x: auto; background: color-mix(in srgb, var(--line) 45%, transparent); padding: 12px 14px; border-radius: 6px; }
+pre code { background: none; padding: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: 500; }
+.tag { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; white-space: nowrap; }
+.ok { color: var(--ok); } .wait { color: var(--wait); } .todo { color: var(--dim); }
+ul.links { padding-left: 18px; }
+footer { margin-top: 48px; color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WUW CAM <span>/ Rust</span></h1>
+  <p class="lede">An alternative firmware for the WUW CAM, written in <code>no_std</code> Rust on esp-hal. It runs on the same ESP32-S3 + OV5640 hardware as the C++ firmware, and it uses the same partition table and stored settings, so you can flash either one.</p>
+
+  <h2>Status: phase 1 spikes</h2>
+  <p>Three small test programs show whether each peripheral works in pure Rust before the full firmware is written. The library crates are tested on a regular computer. The spikes still need a real camera.</p>
+  <table>
+    <thead><tr><th>Piece</th><th>What it proves</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td><code>wuw-board</code></td><td>Pin map matches the C++ firmware (checked by <code>tools/pincheck.py</code>)</td><td><span class="tag ok">tested</span></td></tr>
+      <tr><td><code>wuw-frame</code></td><td>Finds a complete JPEG in a camera buffer</td><td><span class="tag ok">tested</span></td></tr>
+      <tr><td><code>ov5640</code></td><td>Sensor driver: chip ID, register lists, 800x600 and 720p JPEG settings</td><td><span class="tag ok">tested</span></td></tr>
+      <tr><td>Spike C, network</td><td>WiFi access point <code>wuw-rust</code>, DHCP, 6 parallel HTTP clients</td><td><span class="tag wait">written, needs device</span></td></tr>
+      <tr><td>Spike B, SD card</td><td>SDMMC 1-bit init and read speed</td><td><span class="tag todo">next</span></td></tr>
+      <tr><td>Spike A, camera</td><td>OV5640 JPEG capture over LCD_CAM at 25+ fps</td><td><span class="tag todo">next</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Try the host tests</h2>
+<pre><code>cd rust/ov5640 &amp;&amp; cargo test
+cd rust/wuw-board &amp;&amp; cargo test
+cd rust/wuw-frame &amp;&amp; cargo test</code></pre>
+  <p>The spikes need the esp Rust toolchain (<code>espup install</code>). Back up the camera's flash before you flash anything:</p>
+<pre><code>espflash read-flash 0 0x1000000 backup-&lt;cam&gt;.bin
+cd rust/spikes/spike-net &amp;&amp; cargo run --release</code></pre>
+  <p>To go back to the C++ firmware, run <code>pio run -e wuwcam -t upload</code> from the repo root.</p>
+
+  <h2>Read more</h2>
+  <ul class="links">
+    <li><a href="rust/README.md">Rust tree overview</a></li>
+    <li><a href="docs/superpowers/specs/2026-10-09-rust-firmware-design.md">Design spec</a></li>
+    <li><a href="docs/superpowers/plans/2026-10-09-rust-phase1-spikes.md">Phase 1 plan</a></li>
+    <li><a href="docs/WIRING.md">Wiring and pin map</a></li>
+    <li><a href="site/game-preview/">Browser game preview</a> · <a href="site/ritual-wuw/">Event page</a></li>
+  </ul>
+
+  <footer>Firmware GPL-3.0 · hardware CC BY-SA 4.0 · Silkscreen font SIL OFL 1.1. See <a href="NOTICE">NOTICE</a>.</footer>
+</main>
+</body>
+</html>

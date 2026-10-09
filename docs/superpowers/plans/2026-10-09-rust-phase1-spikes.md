@@ -1075,7 +1075,37 @@ git commit -m "Spike B: SDMMC 1-bit card init and read throughput"
 ### Task 10: Spike A, camera (builds now, runs on device)
 
 **Files:**
+- Modify: `rust/ov5640/src/lib.rs`, create `rust/ov5640/src/mode.rs` (Step 0)
 - Create: `rust/spikes/spike-camera/` (generated), modify `src/bin/main.rs`, `Cargo.toml`
+
+**Amendment (review finding, confirmed against espressif/esp32-camera `sensors/ov5640.c`):** `SENSOR_FMT_JPEG` alone does not produce JPEG. Upstream, `esp_camera_init` runs reset (default list), `set_pixformat(JPEG)`, `set_framesize(size)` and `set_quality(q)`. `set_framesize` writes the window (0x3800-0x3807), output size (0x3808-0x380B), totals (0x380C-0x380F), offsets (0x3810-0x3813), read-modify-writes 0x5001 bit 5 (scale), then calls `set_image_options`, which is where compression is switched on (0x3821 bit 5, `reg21 |= 0x20`) together with binning/flip (0x3820, 0x3821, 0x4514, 0x4520, 0x3814, 0x3815), and finally `set_pll` with the JPEG PLL (`sys_mul` 160/180/200 by size, sys_div 4, pre_div 2, pclk_root_div 2, manual pclk_div 4). None of these registers appear in the default list. The C++ firmware streams `FRAMESIZE_SVGA` (800x600), `jpeg_quality = 12`, XCLK 24 MHz (`main_s3.cpp:378-392`), so the spike uses exactly that.
+
+- [ ] **Step 0: JPEG mode in the `ov5640` crate (host-tested)**
+
+Add `Op::Modify(reg, mask, value)` (read, clear `mask`, OR `value & mask`, write) and handle it in `Ov5640::apply`. In `src/mode.rs` port the math of `set_framesize` + `set_image_options` + `set_pll` + `set_quality` for JPEG only, no flip/mirror, as a pure function:
+
+```rust
+pub enum Aspect { R4x3, R3x2, R16x10, R5x3, R16x9, R21x9, R5x4, R1x1, R9x16 }
+pub struct FrameSize { pub w: u16, pub h: u16, pub aspect: Aspect }
+pub const SVGA: FrameSize = FrameSize { w: 800, h: 600, aspect: Aspect::R4x3 };
+pub const HD: FrameSize = FrameSize { w: 1280, h: 720, aspect: Aspect::R16x9 };
+
+/// Register steps that switch a reset + SENSOR_FMT_JPEG sensor to JPEG at `size`.
+pub fn jpeg_mode(size: &FrameSize, xclk_hz: u32, quality: u8) -> heapless::Vec<Op, 48>;
+```
+
+`ratio_table` comes from `vendor/ov5640_settings.h`; the `sys_mul` choice needs the framesize ordering, so compare by pixel area against QVGA (320x240) and XGA (1024x768) exactly as upstream compares enum order, and use 160 when `xclk_hz == 16_000_000`. Host tests (`cargo test` in `rust/ov5640`) assert the exact list for SVGA at 24 MHz, q12:
+
+```
+0x3800=00 0x3801=00 0x3802=00 0x3803=00  0x3804=0A 0x3805=3F 0x3806=07 0x3807=9F
+0x3808=03 0x3809=20 0x380A=02 0x380B=58  0x380C=08 0x380D=0C 0x380E=03 0x380F=D8
+0x3810=00 0x3811=10 0x3812=00 0x3813=08  Modify(0x5001, 0x20, 0x20)
+0x3820=01 0x3821=21 0x4514=AA 0x4520=0B 0x3814=31 0x3815=31
+0x3039=00 0x3034=1A 0x3035=41 0x3036=B4 0x3037=02 0x3108=26 0x3824=04 0x460C=22 0x3103=13
+0x4407=0C
+```
+
+and for HD (binning, `w > 920` so total_x = 2844 - 200 = 2644 = 0x0A54, total_y = 1488 / 2 = 744 = 0x02E8, `sys_mul` 200 = 0xC8), plus a mock-I2C test that `Op::Modify` reads then writes the merged value. Commit: `ov5640: JPEG mode registers ported from set_framesize`.
 
 - [ ] **Step 1: Generate**
 
@@ -1138,6 +1168,8 @@ match sensor.check_id() {
 }
 sensor.apply(ov5640::regs::SENSOR_DEFAULT_REGS, &mut delay).expect("default regs");
 sensor.apply(ov5640::regs::SENSOR_FMT_JPEG, &mut delay).expect("jpeg fmt");
+let mode = ov5640::mode::jpeg_mode(&ov5640::mode::SVGA, 24_000_000, 12);
+sensor.apply(&mode, &mut delay).expect("svga jpeg mode");
 
 // 3. Capture 30 frames into a 192 KiB DMA buffer and time them.
 let mut buf = dma_rx_buffer!(192 * 1024, 4092).expect("dma buf");
@@ -1161,7 +1193,7 @@ log::info!("SPIKE A: {good} good / {bad} bad in {ms} ms = {} fps",
 log::info!("SPIKE A: {}", if good >= 25 { "PASS" } else { "FAIL" });
 ```
 
-Check `dma_rx_buffer!` arguments and whether a 192 KiB buffer fits internal RAM; if not, allocate from PSRAM (`esp_hal::dma::DmaRxBuf::new` over a PSRAM slice, see `src/dma/buffers/mod.rs:660`). Resolution here is whatever the default + JPEG lists produce; reaching 720p means porting `set_framesize` from esp32-camera's `ov5640.c`, which is Task 12.
+Check `dma_rx_buffer!` arguments and whether a 192 KiB buffer fits internal RAM; if not, allocate from PSRAM (`esp_hal::dma::DmaRxBuf::new` over a PSRAM slice, see `src/dma/buffers/mod.rs:660`). Resolution is SVGA 800x600 JPEG q12 from Step 0, matching the C++ stream; Task 12 switches the same function to `HD`.
 
 - [ ] **Step 4: Build**
 
@@ -1191,4 +1223,4 @@ Do not start until the owner plugs in a camera and names it.
 
 ### Task 12: 720p (after Task 11 passes ID and capture)
 
-Port `set_framesize` / `set_image_options` from esp32-camera `sensors/ov5640.c` into `rust/ov5640` with host tests that compare the computed register writes for HD (1280x720) against a captured trace from the C++ firmware. This task is planned in detail once Task 11 shows the base capture works, because it depends on what the default tables produce on this sensor.
+Task 10 Step 0 already ports `set_framesize` / `set_image_options` for JPEG and tests the HD list. What remains: switch spike-camera to `ov5640::mode::HD`, size the DMA buffer for HD frames, and add host tests that compare the computed register writes for HD (1280x720) against a captured trace from the C++ firmware. This task is planned in detail once Task 11 shows the base capture works, because it depends on what the default tables produce on this sensor.

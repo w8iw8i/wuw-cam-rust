@@ -6,6 +6,8 @@ use embedded_hal::{delay::DelayNs, i2c::I2c};
 #[rustfmt::skip]
 pub mod regs;
 
+pub mod mode;
+
 pub const ADDR: u8 = 0x3C;
 pub const CHIP_ID: u16 = 0x5640;
 const REG_CHIP_ID_H: u16 = 0x300A;
@@ -15,6 +17,8 @@ const REG_CHIP_ID_H: u16 = 0x300A;
 pub enum Op {
     Write(u16, u8),
     DelayMs(u16),
+    /// Read `reg`, replace the bits in `mask` with `value`, write it back.
+    Modify(u16, u8, u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +68,10 @@ impl<I: I2c> Ov5640<I> {
             match *op {
                 Op::Write(r, v) => self.write(r, v)?,
                 Op::DelayMs(ms) => delay.delay_ms(ms.into()),
+                Op::Modify(r, mask, v) => {
+                    let old = self.read(r)?;
+                    self.write(r, (old & !mask) | (v & mask))?;
+                }
             }
         }
         Ok(())
@@ -130,6 +138,32 @@ mod tests {
             .apply(&list, &mut delay)
             .expect("mock bus");
         assert_eq!(delay.ms, [10]);
+        bus.done();
+    }
+
+    #[test]
+    fn modify_reads_then_writes_merged_value() {
+        let mut bus = Mock::new(&[
+            T::write_read(ADDR, vec![0x50, 0x01], vec![0xA3]),
+            T::write(ADDR, vec![0x50, 0x01, 0x83]),
+        ]);
+        let mut delay = RecordingDelay::default();
+        Ov5640::new(bus.clone())
+            .apply(&[Op::Modify(0x5001, 0x20, 0x00)], &mut delay)
+            .expect("mock bus");
+        bus.done();
+    }
+
+    #[test]
+    fn modify_only_touches_masked_bits() {
+        let mut bus = Mock::new(&[
+            T::write_read(ADDR, vec![0x50, 0x01], vec![0x83]),
+            T::write(ADDR, vec![0x50, 0x01, 0xA3]),
+        ]);
+        let mut delay = RecordingDelay::default();
+        Ov5640::new(bus.clone())
+            .apply(&[Op::Modify(0x5001, 0x20, 0xFF)], &mut delay)
+            .expect("mock bus");
         bus.done();
     }
 

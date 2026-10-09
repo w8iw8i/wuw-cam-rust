@@ -22,8 +22,9 @@ esp-rtos = { version = "0.4.0", features = [
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3", "log-04"] }
 log                    = "0.4.27"
 
+# Static IPv4 config: the AP is the DHCP server (edge-dhcp), so embassy-net's
+# DHCP client (`dhcpv4`) is not needed. embassy-net pulls in its own smoltcp.
 embassy-net = { version = "0.9.1", features = [
-  "dhcpv4",
   "log",
   "medium-ethernet",
   "tcp",
@@ -47,19 +48,6 @@ esp-radio = { version = "1.0.0-beta.1", features = [
   "log-04",
   "unstable",
   "wifi",
-] }
-smoltcp = { version = "0.14.0", default-features = false, features = [
-  "log",
-  "medium-ethernet",
-  "multicast",
-  "proto-dhcpv4",
-  "proto-dns",
-  "proto-ipv4",
-  "socket-dns",
-  "socket-icmp",
-  "socket-raw",
-  "socket-tcp",
-  "socket-udp",
 ] }
 
 critical-section = "1.2.0"

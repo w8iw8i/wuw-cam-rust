@@ -10,6 +10,9 @@
 //!
 //! Stress test from a laptop joined to the AP:
 //! `python3 tools/spike_net_stress.py --host 192.168.4.1 --conns 6 --secs 600`
+//!
+//! PSRAM is not used by this spike: both heap regions below are internal
+//! SRAM, and all network buffers are statics in internal RAM.
 
 #![no_std]
 #![no_main]
@@ -190,6 +193,10 @@ async fn main(spawner: Spawner) -> ! {
         ));
     let controller_config =
         ControllerConfig::default().with_initial_config(WifiConfig::AccessPoint(ap_config));
+    // The AP starts here: `WifiController::new` applies the initial config via
+    // `set_config`, which switches the mode from NULL (set by the driver init)
+    // to AP and calls `esp_wifi_start` (esp-radio 1.0.0-beta.1). No explicit
+    // start call is needed.
     let wifi_controller = WifiController::new(peripherals.WIFI, controller_config)
         .expect("Failed to initialize Wi-Fi controller");
     let ap_interface = Interface::access_point();
@@ -199,6 +206,10 @@ async fn main(spawner: Spawner) -> ! {
         gateway: Some(AP_IP),
         dns_servers: Default::default(),
     });
+    // Seed for embassy-net (TCP sequence numbers, ephemeral ports). It is read
+    // after `WifiController::new`, which registers the radio as the RNG's
+    // entropy source; read any earlier it would be weak. Either way it is good
+    // enough for a spike on a private AP.
     let rng = Rng::new();
     let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
     let (stack, runner) = embassy_net::new(ap_interface, net_config, STACK_RESOURCES.take(), seed);
@@ -273,7 +284,7 @@ mod tasks {
     pub(super) async fn dhcp_task(stack: Stack<'static>, buffers: &'static mut DhcpBuffers) -> ! {
         let DhcpBuffers { udp, packet } = buffers;
         let udp = Udp::new(stack, udp);
-        let mut gateway_buf = [Ipv4Addr::UNSPECIFIED];
+        let mut gateway_buf = [AP_IP];
         // Gateway = AP_IP, netmask 255.255.255.0, no DNS servers.
         let options = ServerOptions::new(AP_IP, Some(&mut gateway_buf));
         let mut server = DhcpServer::<_, DHCP_MAX_LEASES>::new_with_et(AP_IP);
